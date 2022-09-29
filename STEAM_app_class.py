@@ -7,6 +7,7 @@ import numpy as np
 from random import random
 
 class SteamApp:
+    #Define global variables
     global measureBool
     measureBool = False
     
@@ -14,6 +15,7 @@ class SteamApp:
     yourScore = []
     
     global x1Values,x2Values,x3Values,x1,x2,x3
+    #Below values are used to randomize the location of the three washers for every measurement trial
     x1Values = [1,1.5,2,2.5,3]
     x2Values = [4,4.5,5,5.5,6]
     x3Values = [7,7.5,8,8.5,9]
@@ -22,6 +24,7 @@ class SteamApp:
     x3 = x3Values[int(random()*5)]
     
     def __init__(self,vs):
+        #Define GUI settings
         self.vs = vs
         self.frame = None
         self.thread = None
@@ -92,12 +95,12 @@ class SteamApp:
     def videoLoop(self):
         try:
             while not self.stopEvent.is_set():
-                _,image = self.vs.read()
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                _,image = self.vs.read() #Pull the image data from the video stream
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) #Convert to RGB format
                 if measureBool == True:
-                    HSVImg = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-                    HSVImg = cv2.inRange(HSVImg,(0,0,140),(179,255,255))
-                    im2, contours, hierarchy = cv2.findContours(HSVImg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    HSVImg = cv2.cvtColor(image, cv2.COLOR_RGB2HSV) #Convert to HSV for image processing
+                    HSVImg = cv2.inRange(HSVImg,(0,0,140),(179,255,255)) #Threshold the image to only detect the gray color of the beam
+                    im2, contours, hierarchy = cv2.findContours(HSVImg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) #Detect the contours from the threshold image
                     cnt = sorted(contours, key=cv2.contourArea)
                     tlDistance = 1e6
                     tlPt = tuple([1e6,1e6])
@@ -109,6 +112,8 @@ class SteamApp:
                     brPt = tlPt
                     trPt = tlPt
                     height,width,_ = image.shape
+                    #Loop through all the detected contours, and measure the distance from the contour point to the edges of the image. 
+                    #This will determine the four points that are closest to the four edges of the image (the bounding box points of the beam).
                     for pt in cnt[len(cnt)-1]:
                         ptDistanceTL = cv2.norm(pt - tuple([0,0]))
                         ptDistanceBL = cv2.norm(pt - tuple([0,height]))
@@ -126,6 +131,7 @@ class SteamApp:
                         if ptDistanceTR < trDistance:
                             trDistance = ptDistanceTR
                             trPt = tuple(pt[0])
+                    #Now that we know the detected corners of the beam, calculate the centerline of the beam.
                     leftMid = tuple([int((tlPt[0] + blPt[0])/2),int((tlPt[1] + blPt[1])/2)])
                     rightMid = tuple([int((trPt[0] + brPt[0])/2),int((trPt[1] + brPt[1])/2)])
                     leftPt = np.array(leftMid)
@@ -133,44 +139,42 @@ class SteamApp:
                     xSpan = rightMid[0]-leftMid[0]
                     ySpan = rightMid[1] - leftMid[1]                  
                     
-                    HSVCircle = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-#                     HSVCircle = cv2.inRange(HSVCircle,(0,37,121),(179,255,255))
-                    HSVCircle = cv2.inRange(HSVCircle,(0,120,60),(179,255,255))
-#                     HSVCircle = cv2.erode(HSVCircle, None, iterations = 1)
-#                     HSVCircle = cv2.dilate(HSVCircle, None, iterations = 1)
-                    im2,contours,hierarch = cv2.findContours(HSVCircle,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+                    HSVCircle = cv2.cvtColor(image, cv2.COLOR_RGB2HSV) #Copy the original stored image into a new HSV image for detecting the washer locations
+                    HSVCircle = cv2.inRange(HSVCircle,(0,120,60),(179,255,255)) #Threshold the image looking for the red color of the washers
+                    im2,contours,hierarch = cv2.findContours(HSVCircle,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE) #Find the contours of the threshold image
                     cnt = sorted(contours, key=cv2.contourArea)
-                    cPts = []
+                    cPts = [] #Array used to store unique points for the detected washers
                     if cnt is not None:
-                        totalD=0
                         for c in cnt:
                             M = cv2.moments(c)
-                            if M["m00"] != 0:
-                                cX = int(M["m10"]/M["m00"])
-                                cY = int(M["m01"]/M["m00"])
-                                if(len(cPts)==0):
+                            if M["m00"] != 0: #Find the moments of the contour
+                                cX = int(M["m10"]/M["m00"]) #Determine the x-coordinate of the centroid from the contour moment
+                                cY = int(M["m01"]/M["m00"]) #Determine the y-coordinate of the centroid from the contour moment
+                                if(len(cPts)==0): #If the array of unique points is empty, then the first point has to be unique, so add it.
                                     cPts.append(tuple([cX,cY]))
-                                else:
-                                    uniquePt = True
-                                    for cPtUnique in cPts:
-                                        if abs(cX-cPtUnique[0]) < 10:
-                                            uniquePt = False
-                                    if uniquePt:
+                                else: #For all other points after the first one.
+                                    uniquePt = True #Assume the point will be unique
+                                    for cPtUnique in cPts: #Check uniqueness of current point against all previous points
+                                        if abs(cX-cPtUnique[0]) < 10: #If x-coordinate is within 10 pixels of any previous point
+                                            uniquePt = False #It is not unique
+                                    if uniquePt: #Otherwise, it is unique, so add it to the array
                                         cPts.append(tuple([cX,cY]))
-                                cPt = np.array([cX,cY])
-                                d = abs(np.cross(rightPt-leftPt,cPt-leftPt)/np.linalg.norm(rightPt-leftPt))
-                                totalD = totalD + d
                             else:
                                 cX,cY = 0,0
-                            cv2.circle(image,(cX,cY),1,(255,255,255),-1)
-                            
+                            cv2.circle(image,(cX,cY),1,(255,255,255),-1) #Draw a dot at the detected center of the washers
+                    
+                    #Draw circles at the four corners of the beam
                     cv2.circle(image, tlPt,5,(0,0,255),thickness = 2)
                     cv2.circle(image,blPt,5,(0,0,255),thickness =2)
                     cv2.circle(image,brPt,5,(0,0,255),thickness=2)
                     cv2.circle(image,trPt,5,(0,0,255),thickness=2)
+                    #Draw circles at the leftmost and rightmost points of the centerline, and draw a line down the centerline of the beam
                     cv2.circle(image,leftMid,5,(0,255,0),thickness = 2)
                     cv2.circle(image,rightMid,5,(0,255,0),thickness = 2)
                     cv2.line(image,leftMid,rightMid,(0,255,0),1)
+                    
+                    #Given that the beam is 10" long, use the detected length of the beam (in pixels) to determine where the nominal washer centers
+                    #should be drawn
                     x1Pt = tuple([int((x1/10)*xSpan)+leftMid[0],int((x1/10)*ySpan) + leftMid[1]])
                     x2Pt = tuple([int((x2/10)*xSpan)+leftMid[0],int((x2/10)*ySpan) + leftMid[1]])
                     x3Pt = tuple([int((x3/10)*xSpan)+leftMid[0],int((x3/10)*ySpan) + leftMid[1]])
@@ -181,11 +185,11 @@ class SteamApp:
                     cPts = sorted(cPts,key=lambda k: [k[0],k[1]])
                     sumDistance = 0
                     desiredPts = [x1Pt,x2Pt,x3Pt]
-                    if len(cPts)==3:
+                    if len(cPts)==3: #If three washers were correctly detected, loop through them and determine how far each was off from nominal
                         for i in range(0,3):
                             array1 = np.array([desiredPts[i][0],desiredPts[i][1]])
                             array2 = np.array([cPts[i][0],cPts[i][1]])
-                            sumDistance = sumDistance + abs(np.linalg.norm(array1 - array2))
+                            sumDistance = sumDistance + abs(np.linalg.norm(array1 - array2)) #Sum each of the three distances together
                     if len(yourScore)<10:
                         yourScore.append(sumDistance)
                     else:
